@@ -1,0 +1,69 @@
+name: Build Android TTS Engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      legacy_arm64:
+        description: "Disable ARMv8.2 dotprod/fp16 (enable only for pre-2019 phones)"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "android/**"
+      - "ptts/**"
+      - "ptts-ffi/**"
+      - ".github/workflows/build-android-tts.yml"
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Rust for Android
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+
+      - name: Build native Rust library (libptts_ffi.so)
+        run: |
+          if [ -z "$ANDROID_NDK_HOME" ]; then
+            export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$(ls "$ANDROID_HOME/ndk" | sort -V | tail -n 1)"
+          fi
+          chmod +x ./android/build.sh
+          if [ "${{ inputs.legacy_arm64 }}" == "true" ]; then
+            ARM64_FEATURES= ./android/build.sh
+          else
+            ./android/build.sh
+          fi
+
+      - name: Build Android APKs with Gradle
+        working-directory: android/tts-engine
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug assembleRelease
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: phonon-tts-engine-apks
+          path: android/tts-engine/build/outputs/apk/**/*.apk
+          
